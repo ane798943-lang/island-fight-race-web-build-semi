@@ -1,0 +1,30 @@
+--- a/realtime_client.gd	2026-11-07 04:04:07.299057658 +0000
++++ b/realtime_client.gd	2026-11-07 04:04:07.313939027 +0000
+@@ -50,7 +50,11 @@
+ 
+ func _ready() -> void:
+ 	process_mode = Node.PROCESS_MODE_ALWAYS
+-	var bytes := Crypto.new().generate_random_bytes(9)
++	var rng := RandomNumberGenerator.new()
++	rng.randomize()
++	var bytes := PackedByteArray()
++	for i in 9:
++		bytes.append(rng.randi() & 0xFF)
+ 	_key = Marshalls.raw_to_base64(bytes).replace("+", "a").replace("/", "b").replace("=", "")
+ 
+ 
+--- a/network_manager.gd	2026-11-07 04:04:07.299086816 +0000
++++ b/network_manager.gd	2026-11-07 04:04:07.314914221 +0000
+@@ -187,8 +187,10 @@
+ 
+ static func _random_id(length: int) -> String:
+ 	var out := ""
+-	for b in Crypto.new().generate_random_bytes(length):
+-		out += ID_CHARS[int(b) % ID_CHARS.length()]
++	var rng := RandomNumberGenerator.new()
++	rng.randomize()
++	for i in length:
++		out += ID_CHARS[rng.randi() % ID_CHARS.length()]
+ 	return out
+ 
+ 
