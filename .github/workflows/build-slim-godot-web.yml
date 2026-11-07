@@ -1,0 +1,84 @@
+name: Build slim Godot Web template (Island Fight Race)
+
+on:
+  workflow_dispatch:
+    inputs:
+      godot_ref:
+        description: "Godot git tag/branch (must match the editor you export with)"
+        default: "4.7.2-stable"
+      emscripten:
+        description: "Emscripten SDK version (use the one your current template was built with)"
+        default: "4.0.11"
+      baseline_wasm_bytes:
+        description: "Size of your current godot.wasm, for the comparison line"
+        default: "19287799"
+      wasm_opt_extra:
+        description: "Extra binaryen pass (-Oz). Off by default; test in browser if enabled"
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout this kit
+        uses: actions/checkout@v4
+        with:
+          path: kit
+
+      - name: Checkout Godot
+        run: git clone --depth 1 --branch "${{ inputs.godot_ref }}" https://github.com/godotengine/godot.git godot
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ inputs.emscripten }}
+          actions-cache-folder: emsdk-cache
+
+      - name: Setup Python + SCons
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install scons
+
+      - name: Audit project (only if a project/ folder is committed next to the kit)
+        run: |
+          if [ -d kit/project ]; then python3 -I kit/tools/audit_project.py kit/project; else echo "no project/ folder - skipped"; fi
+
+      - name: Apply kit config
+        run: |
+          cp kit/custom.py godot/custom.py
+          mkdir -p godot/profiles && cp kit/profiles/island_fight_race.build godot/profiles/
+
+      - name: Build template_release (web, no threads)
+        working-directory: godot
+        run: scons -j"$(nproc)" 2>&1 | tee ../build.log
+
+      - name: Optional extra wasm-opt
+        if: ${{ inputs.wasm_opt_extra }}
+        working-directory: godot/bin
+        run: |
+          sudo apt-get install -y binaryen
+          unzip -o godot.web.template_release.wasm32.nothreads.zip -d x
+          wasm-opt -Oz --converge --strip-debug --strip-producers x/godot.wasm -o x/godot.wasm.new
+          mv x/godot.wasm.new x/godot.wasm
+          (cd x && zip -9 -r ../godot.web.template_release.wasm32.nothreads.zip .)
+
+      - name: Package and report sizes
+        run: |
+          mkdir -p out && cp godot/bin/godot.web.template_release.wasm32.nothreads.zip out/web_nothreads_release.zip
+          cd out && rm -rf t && mkdir t && unzip -q web_nothreads_release.zip -d t
+          W=$(stat -c%s t/godot.wasm); B=${{ inputs.baseline_wasm_bytes }}
+          echo "godot.wasm: $W bytes (baseline $B, saved $((B-W)) bytes = $(( (B-W)*100/B ))%)" | tee sizes.txt
+          echo "gzip -9: $(gzip -9 -c t/godot.wasm | wc -c)" | tee -a sizes.txt
+          echo "zip: $(stat -c%s web_nothreads_release.zip)" | tee -a sizes.txt
+          ls -l t | tee -a sizes.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web_nothreads_release
+          path: |
+            out/web_nothreads_release.zip
+            out/sizes.txt
+            build.log
